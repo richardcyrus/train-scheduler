@@ -1,0 +1,10 @@
+.idea
+.config.codekit3
+config.codekit3
+**/scss/*
+*.map
+.history
+build/*
+build
+*.scss
+*-min.*
