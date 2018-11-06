@@ -9,3 +9,6 @@ build
 *.scss
 *-min.*
 node_modules
+fire*
+.fire*
+database*

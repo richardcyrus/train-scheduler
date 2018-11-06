@@ -7,7 +7,7 @@
  * (c) 2018 Richard Cyrus <richard.cyrus@rcyrus.com>
  */
 
-(function ($) {
+(function ($, firebase, moment) {
     "use strict";
 
     /**
@@ -27,6 +27,13 @@
     const TrainScheduler = (function () {
 
         /**
+         * Reference to the Firebase database object.
+         *
+         * @type {firebase.firestore.DocumentReference|firebase.firestore.CollectionReference}
+         */
+        let db = null;
+
+        /**
          * The form on the page used to add new train records to the
          * schedule.
          *
@@ -43,31 +50,74 @@
         const table = $('tbody');
 
         /**
-         * Display the current time on the 'Current Train Schedule'
-         * panel.
+         * Display a message on the screen to tell the user something.
+         *
+         * @param {string} message
+         * @param {string} level
          */
-        const clock = function () {
-            const date = new Date();
+        const showAlert = function (message, level = 'danger') {
+            const levels = [
+                'primary',
+                'secondary',
+                'success',
+                'danger',
+                'warning',
+                'info',
+                'light',
+                'dark'
+            ];
 
-            const hour = date.getHours();
-            const minutes = date.getMinutes();
-            const seconds = date.getSeconds();
-
-            /**
-             * Determine if the provided number should have a leading
-             * zero added to it.
-             *
-             * @param unit
-             * @returns {string}
-             */
-            function padZero(unit) {
-                return (unit < 10) ? `0${unit}` : unit;
+            if (!levels.includes(level)) {
+                level = 'warning';
             }
 
-            let timeDisplay = `${padZero(hour)}:${padZero(minutes)}:${padZero(seconds)}`;
+            const closeSymbol = $('<span/>')
+                .attr('aria-hidden', 'true')
+                .html('&times;');
 
-            $('.clock-display').text(timeDisplay);
+            const button = $('<button/>')
+                .addClass('close')
+                .attr({
+                    'data-dismiss': 'alert',
+                    'aria-label': 'Close'
+                }).append(closeSymbol);
 
+            const alert = $('<div/>')
+                .addClass(`alert alert-${level} alert-dismissible fade show`)
+                .attr('role', 'alert')
+                .append(message, button);
+
+            $('.alert-container').append(alert);
+        };
+
+        /**
+         * Add a new record to the database.
+         *
+         * @param {Object} data
+         * @type {{startingLocation: string, destination: string, firstTrainTime: string, trainInterval: number}} data
+         */
+        const saveNewTrain = function (data) {
+            db.add(data).catch((error) => {
+                showAlert(`Error adding document: ${error}`);
+            });
+        };
+
+        /**
+         * Remove a schedule record from the database.
+         *
+         * @param {string} docPath
+         */
+        const removeTrainRecord = function (docPath) {
+            db.doc(docPath).delete().catch((error) => {
+                showAlert(`Error removing document: ${error}`);
+            });
+        };
+
+        /**
+         * Display the a clock in the Jumbotron.
+         */
+        const clock = function () {
+            $('.clock-display').text(moment().format('h:mm:ss A'));
             setTimeout(clock, 1000);
         };
 
@@ -108,7 +158,7 @@
          * @param minutes
          * @returns {string}
          */
-        const formatMinutes = function (minutes) {
+        const formatTimeToTrain = function (minutes) {
             const seconds = Math.floor(minutes * 60);
             const remainder = seconds % 60;
 
@@ -135,20 +185,14 @@
                 moment.HTML5_FMT.TIME
             ).subtract(1, 'years');
 
-            // Get the difference in minutes between now, and the
-            // first departure time.
-            let differenceMinutes = now.diff(
+            let timeDifference = now.diff(
                 startingDeparture,
                 'minutes'
             );
 
-            // Get the modulus of the minutes difference and the scheduling
-            // interval.
-            let intervalRemainder = differenceMinutes % departureInterval;
+            let timeApart = timeDifference % departureInterval;
 
-            // The time to the next train is the interval, minus the
-            // modulus of minutes difference from now and the interval.
-            let minutesToNext = departureInterval - intervalRemainder;
+            let minutesToNext = departureInterval - timeApart;
 
             // The next train will arrive in now + minutes to next.
             let nextTrain = now.add(
@@ -180,11 +224,11 @@
 
             // Update with the next time for the train.
             $(scheduleSelectors.nextTrainTimeSelector).text(
-                times.nextArrival.format('HH:mm A'));
+                times.nextArrival.format('h:mm A'));
 
             // Update the 'Minutes Away' display.
             $(scheduleSelectors.minutesAwaySelector).text(
-                formatMinutes(times.minutesAway));
+                formatTimeToTrain(times.minutesAway));
 
             // Start the 'Minutes Away' counter.
             updateTimes(scheduleSelectors, data, times.minutesAway);
@@ -213,6 +257,9 @@
                 let time = `${minutes}:${remainder < 10 ? '0' : ''}${remainder}`;
 
                 $(scheduleSelectors.minutesAwaySelector).text(time);
+                // $(scheduleSelectors.minutesAwaySelector).text(
+                //     moment().add(seconds, 'seconds').format('h:mm:ss')
+                // );
             };
 
             // Start the 'Minutes Away' timer.
@@ -224,37 +271,38 @@
         /**
          * Add a row to the 'Current Train Schedule' table.
          *
-         * @param data
+         * @param {firebase.firestore.DocumentReference|string} rowIdentifier The document Path from Firebase.
+         * @param {Object} data
+         * @type {{startingLocation: string, destination: string, firstTrainTime: string, trainInterval: number}} data
          */
-        const addScheduledTrain = function (data) {
-            // Create a random identifier for the table rows so that we
-            // can accurately update the 'Minutes Away' timer and the
-            // 'Next Train' time.
-            const rowIdentifier = Math.random()
-                .toString(36)
-                .replace(/[^a-z]+/g, '')
-                .substr(0, 5);
+        const addScheduledTrain = function (rowIdentifier, data) {
+            /**
+             * Define the selectors for updating the `Next Train` and
+             * `Time to Train` cells dynamically.
+             *
+             * @type {{minutesAwaySelector: string, nextTrainTimeSelector: string}}
+             */
+            const trainScheduleSelectors = {
+                minutesAwaySelector: `[data-record-id="${rowIdentifier}"] > .minutes-away`,
+                nextTrainTimeSelector: `[data-record-id="${rowIdentifier}"] > .next-train-time`
+            };
 
+            // Get the arrival times, and time to next train.
             const times = getTrainTimes(
                 data.firstTrainTime,
                 data.trainInterval
             );
 
-            const trainScheduleSelectors = {
-                minutesAwaySelector: `#${rowIdentifier} > .minutes-away`,
-                nextTrainTimeSelector: `#${rowIdentifier} > .next-train-time`
-            };
-
             const tableRow = `
-                <tr id="${rowIdentifier}">
+                <tr data-record-id="${rowIdentifier}">
                     <td>${data.startingLocation}</td>
                     <td>${data.destination}</td>
                     <td class="text-right">${data.trainInterval}</td>
                     <td class="text-right pr-2 next-train-time">
-                        ${times.nextArrival.format('HH:mm A')}
+                        ${times.nextArrival.format('h:mm A')}
                     </td>
                     <td class="text-right pr-4 minutes-away">
-                        ${formatMinutes(times.minutesAway)}
+                        ${formatTimeToTrain(times.minutesAway)}
                     </td>
                     <td class="d-flex justify-content-around">
                         <button class="btn btn-danger remove" type="button" role="delete">
@@ -265,14 +313,50 @@
 
             table.append(tableRow);
 
-            // Start the 'Minutes Away' timer.
+            // Start the 'Time to train' timer.
             updateTimes(trainScheduleSelectors, data, times.minutesAway);
         };
 
         /**
-         * Register the click and other handlers for the application.
+         * Process the onSnapshot events from Firestore.
+         *
+         * In this case we use it to make the additions to the
+         * train schedule table when the page is first loaded, and when
+         * records are added to the database.
+         *
+         * @param {firebase.firestore.QuerySnapshot} snapshot
+         */
+        const handleDataChange = function (snapshot) {
+            snapshot.docChanges().forEach((change) => {
+                /**
+                 * The onSnapshot event is triggered for all non-metadata
+                 * changes. Here we only look for 'added' to ensure that
+                 * we don't duplicate the rows displayed in the table.
+                 *
+                 * 'added' is fired on first connection, and for each
+                 * save `.add()` to the database.
+                 */
+                if (change.type === 'added') {
+                    addScheduledTrain(change.doc.id, change.doc.data());
+                }
+            });
+        };
+
+        /**
+         * Register the event handlers for the application.
          */
         const registerHandlers = function () {
+            /**
+             * Setup the listener for database modifications and adding
+             * the rows to the schedule table.
+             */
+            db.onSnapshot(
+                handleDataChange,
+                function (error) {
+                    showAlert(`There was an error with the database: ${error}`);
+                }
+            );
+
             /**
              * Handle Form validation and submission of user provided
              * values.
@@ -294,7 +378,7 @@
                 form.addClass('was-validated');
 
                 // If the form is valid, process it.
-                if (! e.isDefaultPrevented()) {
+                if (!e.isDefaultPrevented()) {
                     // Prevent the default action of the submit button.
                     e.preventDefault();
 
@@ -317,13 +401,13 @@
                         }
                     });
 
-                    // Update the Train Schedule table.
-                    addScheduledTrain(train);
+                    // Update the database.
+                    saveNewTrain(train);
 
                     // Clear the form fields.
                     form[0].reset();
 
-                    // Remove the validation trigger class.
+                    // Remove the validation status class.
                     form.removeClass('was-validated');
 
                     return false;
@@ -331,10 +415,16 @@
             });
 
             /**
-             * Handle the removal of a row from the Schedule table when
-             * the user click on the Trash/Remove button.
+             * Handle the removal of a schedule when the user click on
+             * the Trash/Remove button.
              */
             $('.table').on('click', '.remove', function () {
+                // Get the record ID (The document path in Firestore.)
+                const docPath = $(this).parents('tr')
+                    .attr('data-record-id');
+
+                removeTrainRecord(docPath);
+
                 $(this).parents('tr').detach();
             });
         };
@@ -342,7 +432,21 @@
         /**
          * Initialize the application.
          */
-        const init = function () {
+        const init = function (config) {
+            // Create the FireBase connection.
+            firebase.initializeApp(config);
+
+            // Initialize Cloud Firestore through Firebase.
+            db = firebase.firestore();
+
+            // Disable deprecated features.
+            db.settings({
+                timestampsInSnapshots: true
+            });
+
+            // Set the Cloud Firestore collection root.
+            db = db.collection('schedules');
+
             // Show the clock on the page.
             clock();
 
@@ -359,7 +463,8 @@
                 timeFormat: 'HH:mm'
             });
 
-            // Register click and submit events.
+            // Register click and submit events, and the database
+            // listener.
             registerHandlers();
         };
 
@@ -371,5 +476,5 @@
         };
     })();
 
-    TrainScheduler.start();
-})(jQuery);
+    TrainScheduler.start(firebaseConfig);
+})(jQuery, firebase, moment);
