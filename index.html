@@ -14,11 +14,32 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/timepicker/1.3.5/jquery.timepicker.min.css"
           integrity="sha256-DVV5cU9pxHH2Rofop3XD3b3rbfrOSIy2nU61DEbYy1Q="
           crossorigin="anonymous"/>
+    <link type="text/css" rel="stylesheet" href="https://cdn.firebase.com/libs/firebaseui/3.4.1/firebaseui.css"/>
     <link rel="stylesheet" type="text/css" href="assets/css/style.css">
 </head>
 <body>
-<div class="container pt-4">
-    <div class="jumbotron text-center bg-dark text-white">
+<div id="logged-out" class="container pt-4">
+    <div class="jumbotron text-center text-muted">
+        <h1 class="display-3">
+            <span class="fas fa-train" aria-hidden="true"></span>&nbsp;
+            <span class="far fa-clock" aria-hidden="true"></span>&nbsp;
+            <span class="fas fa-subway" aria-hidden="true"></span>
+        </h1>
+        <h1 class="display-3">Train Scheduler</h1>
+        <hr class="my-4 border-primary">
+        <h5>Sign-in to access the Train Scheduler</h5>
+    </div>
+    <div id="firebaseui-auth-container"></div>
+</div>
+<div id="logged-in" class="container d-none">
+    <nav class="navbar navbar-dark bg-dark text-white">
+        <a class="navbar-brand" href="#"><span class="fas fa-train" aria-hidden="true"></span></a>
+        <p class="m-0 p-0"><span id="user"></span></p>
+        <form class="form-inline">
+            <button id="sign-out" class="btn btn-danger my-2 my-sm-0" type="submit">Sign out</button>
+        </form>
+    </nav>
+    <div class="jumbotron text-center bg-dark text-white mt-4">
         <h1 class="display-3">
             <span class="fas fa-train" aria-hidden="true"></span>&nbsp;
             <span class="far fa-clock" aria-hidden="true"></span>&nbsp;
@@ -30,18 +51,18 @@
     </div>
     <div class="alert-container"></div>
     <div class="card border-primary mb-4">
-        <div class="card-header bg-primary text-white d-flex justify-content-between">
+        <div class="card-header bg-primary text-white">
             <span class="title">Current Train Schedule</span>
         </div>
-        <div class="card-body">
+        <div class="card-body table-responsive">
             <table class="table table-striped table-hover">
                 <thead class="thead-primary">
                 <tr>
                     <th scope="col">Start Location</th>
                     <th scope="col">Destination</th>
-                    <th scope="col" class="text-right">Frequency (min)</th>
+                    <th scope="col" class="text-right text-sm-center">Frequency (min)</th>
                     <th scope="col" class="text-right">Next Train</th>
-                    <th scope="col" class="text-right">Time to Train</th>
+                    <th scope="col" class="text-right text-sm-center">Time to Train</th>
                     <th scope="col" class="text-center">Manage</th>
                 </tr>
                 </thead>
@@ -106,6 +127,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/moment-duration-format/2.2.2/moment-duration-format.min.js"
         integrity="sha256-bXC/nhRjq/J7K4hnL8yvthqXkskSKOsZNfrLgXBigYg="
         crossorigin="anonymous"></script>
+<script src="https://cdn.firebase.com/libs/firebaseui/3.4.1/firebaseui.js"></script>
 <script type="text/javascript" src="assets/js/app.js"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-/* global jQuery, firebase */
+/* global jQuery, firebase, firebaseui, moment */
 
 /**
  * Train Scheduler
@@ -7,7 +7,7 @@
  * (c) 2018 Richard Cyrus <richard.cyrus@rcyrus.com>
  */
 
-(function ($, firebase, moment) {
+(function ($, firebase, moment, firebaseui) {
     "use strict";
 
     /**
@@ -29,9 +29,16 @@
         /**
          * Reference to the Firebase database object.
          *
-         * @type {firebase.firestore.DocumentReference|firebase.firestore.CollectionReference}
+         * @type {firebase.firestore.Firestore}
          */
         let db = null;
+
+        /**
+         * Reference to the Firebase database object.
+         *
+         * @type {firebase.firestore.CollectionReference}
+         */
+        let scheduleCollection = null;
 
         /**
          * The form on the page used to add new train records to the
@@ -48,6 +55,67 @@
          * @type {*|jQuery|HTMLElement}
          */
         const table = $('tbody');
+
+        /**
+         * The authentication token for the logged-in user.
+         *
+         * @type {null|string}
+         */
+        let userIdToken = null;
+
+        /**
+         * The element reference for the sign-out button.
+         *
+         * @type {*|jQuery|HTMLElement}
+         */
+        const signOutButton = $('#sign-out');
+
+        /**
+         * Configure the firebase authentication providers.
+         */
+        const configureLoginWidget = function () {
+            const uiConfig = {
+                'signInSuccessUrl': '/',
+                'signInOptions': [
+                    firebase.auth.GoogleAuthProvider.PROVIDER_ID,
+                    firebase.auth.GithubAuthProvider.PROVIDER_ID,
+                    firebaseui.auth.AnonymousAuthProvider.PROVIDER_ID
+                ],
+                'tosUrl': 'terms.html',
+                'privacyPolicyUrl': 'privacy.html'
+            };
+
+            const ui = new firebaseui.auth.AuthUI(firebase.auth());
+            ui.start('#firebaseui-auth-container', uiConfig);
+            ui.disableAutoSignIn();
+        };
+
+        /**
+         * Handle the firebase login/logout
+         */
+        const configureLogin = function () {
+            firebase.auth().onAuthStateChanged(function (user) {
+                if (user) {
+                    $('#logged-out').addClass('d-none');
+
+                    const name = user.displayName;
+                    const welcomeName = name ? name : user.email;
+
+                    user.getIdToken().then(function (idToken) {
+                        userIdToken = idToken;
+
+                        if (welcomeName) {
+                            $('#user').text(`Welcome, ${welcomeName}`);
+                        }
+
+                        $('#logged-in').removeClass('d-none');
+                    });
+                } else {
+                    $('#logged-in').addClass('d-none');
+                    $('#logged-out').removeClass('d-none');
+                }
+            });
+        };
 
         /**
          * Display a message on the screen to tell the user something.
@@ -91,15 +159,72 @@
         };
 
         /**
+         * Process an error result from a firebase database request.
+         *
+         * @param {firebase.firestore.FirestoreError} error
+         */
+        const handleFirebaseError = function (error) {
+
+            switch (error.code) {
+                case 'cancelled':
+                    showAlert('The operation was cancelled.');
+                    break;
+                case 'unknown':
+                    showAlert('An unknown error occurred.');
+                    break;
+                case 'invalid-argument':
+                    showAlert('An invalid argument was provided.');
+                    break;
+                case 'deadline-exceeded':
+                    showAlert('The time to complete the operation has been exceeded.', 'warning');
+                    break;
+                case 'not-found':
+                    showAlert('The requested record was not found.');
+                    break;
+                case 'already-exists':
+                    showAlert('The record you are attempting to create already exists.');
+                    break;
+                case 'permission-denied':
+                    showAlert('You do not have permission to complete your task.');
+                    break;
+                case 'resource-exhausted':
+                    showAlert('Insufficient resources to process your request.');
+                    break;
+                case 'failed-precondition':
+                    showAlert('The system is not ready to process your request.');
+                    break;
+                case 'aborted':
+                    showAlert('The operation was aborted.');
+                    break;
+                case 'out-of-range':
+                    showAlert('The request was outside the valid range.');
+                    break;
+                case 'unimplemented':
+                    showAlert('The requested operation is not supported.');
+                    break;
+                case 'unavailable':
+                    showAlert('The system is currently not available.');
+                    break;
+                case 'unauthenticated':
+                    showAlert('You have not provided sufficient credentials to complete the operation.');
+                    break;
+            }
+        };
+
+        /**
          * Add a new record to the database.
          *
-         * @param {Object} data
+         * @param {Object|firebase.firestore.DocumentData} data
          * @type {{startingLocation: string, destination: string, firstTrainTime: string, trainInterval: number}} data
          */
         const saveNewTrain = function (data) {
-            db.add(data).catch((error) => {
-                showAlert(`Error adding document: ${error}`);
-            });
+            scheduleCollection.add(data)
+                .then(function (docRef) {
+                    addScheduledTrain(docRef.id, docRef.get().data());
+                })
+                .catch(function (error) {
+                    handleFirebaseError(error);
+                });
         };
 
         /**
@@ -108,16 +233,40 @@
          * @param {string} docPath
          */
         const removeTrainRecord = function (docPath) {
-            db.doc(docPath).delete().catch((error) => {
-                showAlert(`Error removing document: ${error}`);
-            });
+            scheduleCollection.doc(docPath).delete()
+                .then(function () {
+                    $(`[data-record-id="${docPath}"]`).detach();
+                })
+                .catch(function (error) {
+                    handleFirebaseError(error);
+                });
         };
 
         /**
-         * Display the a clock in the Jumbotron.
+         * Determine if the provided unit should have a leading
+         * zero added to it.
+         *
+         * @param unit
+         * @returns {string}
+         */
+        const padZero = function (unit) {
+            return (unit < 10) ? `0${unit}` : unit;
+        };
+
+        /**
+         * Display the a clock.
          */
         const clock = function () {
-            $('.clock-display').text(moment().format('h:mm:ss A'));
+            const date = new Date();
+
+            const hour = date.getHours();
+            const minutes = date.getMinutes();
+            const seconds = date.getSeconds();
+
+            let timeDisplay = `${padZero(hour)}:${padZero(minutes)}:${padZero(seconds)}`;
+
+            $('.clock-display').text(timeDisplay);
+
             setTimeout(clock, 1000);
         };
 
@@ -257,9 +406,6 @@
                 let time = `${minutes}:${remainder < 10 ? '0' : ''}${remainder}`;
 
                 $(scheduleSelectors.minutesAwaySelector).text(time);
-                // $(scheduleSelectors.minutesAwaySelector).text(
-                //     moment().add(seconds, 'seconds').format('h:mm:ss')
-                // );
             };
 
             // Start the 'Minutes Away' timer.
@@ -318,31 +464,6 @@
         };
 
         /**
-         * Process the onSnapshot events from Firestore.
-         *
-         * In this case we use it to make the additions to the
-         * train schedule table when the page is first loaded, and when
-         * records are added to the database.
-         *
-         * @param {firebase.firestore.QuerySnapshot} snapshot
-         */
-        const handleDataChange = function (snapshot) {
-            snapshot.docChanges().forEach((change) => {
-                /**
-                 * The onSnapshot event is triggered for all non-metadata
-                 * changes. Here we only look for 'added' to ensure that
-                 * we don't duplicate the rows displayed in the table.
-                 *
-                 * 'added' is fired on first connection, and for each
-                 * save `.add()` to the database.
-                 */
-                if (change.type === 'added') {
-                    addScheduledTrain(change.doc.id, change.doc.data());
-                }
-            });
-        };
-
-        /**
          * Register the event handlers for the application.
          */
         const registerHandlers = function () {
@@ -350,10 +471,22 @@
              * Setup the listener for database modifications and adding
              * the rows to the schedule table.
              */
-            db.onSnapshot(
-                handleDataChange,
+            scheduleCollection.onSnapshot(
+                {
+                    includeMetadataChanges: true
+                },
+                function (snapshot) {
+                    snapshot.docChanges().forEach((change) => {
+                        if (change.type === 'added') {
+                            addScheduledTrain(change.doc.id, change.doc.data());
+                        }
+                        else if (change.type === 'removed') {
+                            $(`[data-record-id="${change.doc.id}"]`).detach()
+                        }
+                    });
+                },
                 function (error) {
-                    showAlert(`There was an error with the database: ${error}`);
+                    handleFirebaseError(error);
                 }
             );
 
@@ -365,8 +498,7 @@
                 /**
                  * Trigger client side form validation.
                  *
-                 * The checkValidity() call has to occur on a form node
-                 * not on the <form> element itself.
+                 * The checkValidity() call has to occur on a form node.
                  *
                  * $(this) = [form#add-train.needs-validation]
                  * $(this)[0] = the full form HTML with all fields.
@@ -379,7 +511,6 @@
 
                 // If the form is valid, process it.
                 if (!e.isDefaultPrevented()) {
-                    // Prevent the default action of the submit button.
                     e.preventDefault();
 
                     const train = {
@@ -401,10 +532,8 @@
                         }
                     });
 
-                    // Update the database.
                     saveNewTrain(train);
 
-                    // Clear the form fields.
                     form[0].reset();
 
                     // Remove the validation status class.
@@ -419,13 +548,22 @@
              * the Trash/Remove button.
              */
             $('.table').on('click', '.remove', function () {
-                // Get the record ID (The document path in Firestore.)
-                const docPath = $(this).parents('tr')
-                    .attr('data-record-id');
+                const docPath = $(this).parents('tr').attr('data-record-id');
 
                 removeTrainRecord(docPath);
+            });
 
-                $(this).parents('tr').detach();
+            /**
+             * Handle the sign-out process.
+             */
+            signOutButton.on('click', function (e) {
+                e.preventDefault();
+
+                firebase.auth().signOut().then(function () {
+                    // showAlert('Sign out successful', 'success');
+                }).catch(function (error) {
+                    handleFirebaseError(error);
+                });
             });
         };
 
@@ -433,22 +571,16 @@
          * Initialize the application.
          */
         const init = function (config) {
-            // Create the FireBase connection.
-            firebase.initializeApp(config);
+            const app = firebase.initializeApp(config);
 
-            // Initialize Cloud Firestore through Firebase.
-            db = firebase.firestore();
+            db = firebase.firestore(app);
 
-            // Disable deprecated features.
             db.settings({
                 timestampsInSnapshots: true
             });
 
             // Set the Cloud Firestore collection root.
-            db = db.collection('schedules');
-
-            // Show the clock on the page.
-            clock();
+            scheduleCollection = db.collection('schedules');
 
             /**
              * Configure the jQuery TimePicker extension to provide a
@@ -463,9 +595,10 @@
                 timeFormat: 'HH:mm'
             });
 
-            // Register click and submit events, and the database
-            // listener.
             registerHandlers();
+            configureLoginWidget();
+            configureLogin();
+            clock();
         };
 
         /**
@@ -477,4 +610,4 @@
     })();
 
     TrainScheduler.start(firebaseConfig);
-})(jQuery, firebase, moment);
+})(jQuery, firebase, moment, firebaseui);

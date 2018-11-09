@@ -1,0 +1,13 @@
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // schedules:
+    // - Anyone can read
+    // - Authenticated users can create/update/delete
+    match /schedules/{scheduleId} {
+      allow read: if true;
+      allow create: if request.auth.uid != null;
+      allow update: if request.auth.uid != null;
+      allow delete: if request.auth.uid != null;
+    }
+  }
+}
