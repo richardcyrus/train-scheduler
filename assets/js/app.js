@@ -54,7 +54,7 @@
          *
          * @type {*|jQuery|HTMLElement}
          */
-        const table = $('tbody');
+        const tableBody = $('tbody');
 
         /**
          * The authentication token for the logged-in user.
@@ -215,7 +215,6 @@
          * Add a new record to the database.
          *
          * @param {Object|firebase.firestore.DocumentData} data
-         * @type {{startingLocation: string, destination: string, firstTrainTime: string, trainInterval: number}} data
          */
         const saveNewTrain = function (data) {
             scheduleCollection.add(data)
@@ -254,7 +253,7 @@
         };
 
         /**
-         * Display the a clock.
+         * Display a clock on the page.
          */
         const clock = function () {
             const date = new Date();
@@ -271,21 +270,20 @@
         };
 
         /**
-         * Manage the countdown timer for the Minutes Away column in the
-         * schedule.
+         * A count down timer.
          *
-         * @param minutes
-         * @param displayUpdate
+         * @param {number} seconds
+         * @param {Object} update
          * @param runWhenFinished
          */
-        const timer = function (minutes, displayUpdate = false, runWhenFinished = false) {
+        const countDownTimer = function (seconds, update = false, runWhenFinished = false) {
             const now = Date.now();
-            const then = now + (minutes * 60) * 1000;
+            const then = now + seconds * 1000;
 
             const intervalId = setInterval(() => {
-                let timeLeft = Math.round((then - Date.now()) / 1000);
+                const secondsLeft = Math.round((then - Date.now()) / 1000);
 
-                if (timeLeft <= 0) {
+                if (secondsLeft <= 0) {
                     clearInterval(intervalId);
 
                     if (runWhenFinished) {
@@ -295,33 +293,52 @@
                     return;
                 }
 
-                if (displayUpdate) {
-                    displayUpdate(timeLeft);
+                if (update) {
+                    update.callback(secondsLeft, update.element);
                 }
             }, 1000);
         };
 
         /**
-         * Format the whole number of minutes into 00:00.
+         * Convert the TimeToTrain to hours:minutes:seconds.
          *
-         * @param minutes
+         * @param {number} seconds
          * @returns {string}
          */
-        const formatTimeToTrain = function (minutes) {
-            const seconds = Math.floor(minutes * 60);
-            const remainder = seconds % 60;
+        const convertTimeToTrain = function (seconds) {
+            const time = new Date(0, 0, 0);
+            time.setSeconds(seconds);
 
-            return `${minutes}:${remainder < 10 ? '0' : ''}${remainder}`;
+            const hours = time.getHours();
+            const minutes = time.getMinutes();
+            const secs = time.getSeconds();
+
+            if (hours > 0) {
+                return `${hours}:${padZero(minutes)}:${padZero(secs)}`;
+            } else {
+                return `${minutes}:${padZero(secs)}`;
+            }
+        };
+
+        /**
+         * Callback to update the display of the Time To Train in relation
+         * to the time remaining to its arrival.
+         *
+         * @param {number} seconds
+         * @param {jQuery|HTMLElement} element
+         */
+        const updateTimeToTrain = function (seconds, element) {
+            $(element).text(convertTimeToTrain(seconds));
         };
 
         /**
          * Determine the time to the next train returning both the
-         * total minutes (next train) and the remaining interval
-         * (minutes to next).
+         * next scheduled train time and the number of seconds to the
+         * arrival.
          *
          * @param firstDeparture
          * @param departureInterval
-         * @returns {{nextArrival: *, minutesAway: number}}
+         * @returns {{nextArrival: *, secondsToNext: number}}
          */
         const getTrainTimes = function (firstDeparture, departureInterval) {
             // Get the current date & time.
@@ -352,85 +369,69 @@
             // Send the important parts to the caller.
             return {
                 nextArrival: nextTrain,
-                minutesAway: minutesToNext
+                secondsToNext: (minutesToNext * 60)
             };
         };
 
         /**
-         * When the 'Minutes Away' counter reaches 0, get and display
-         * the new 'Next Train' time, and start the 'Minutes Away' counter
-         * again.
+         * Update the display of the 'Next Train' time and the 'Time To Train'
+         * when the 'Time To Train' reaches zero.
          *
-         * @param data
-         * @param scheduleSelectors
+         * @param {Object} data
+         * @param {Object} scheduleSelectors
          */
         const updateTrainTimeCounters = function (data, scheduleSelectors) {
-            // Get the next times.
             const times = getTrainTimes(
                 data.firstTrainTime,
                 data.trainInterval
             );
 
-            // Update with the next time for the train.
-            $(scheduleSelectors.nextTrainTimeSelector).text(
+            $(scheduleSelectors.nextTrainTime).text(
                 times.nextArrival.format('h:mm A'));
 
-            // Update the 'Minutes Away' display.
-            $(scheduleSelectors.minutesAwaySelector).text(
-                formatTimeToTrain(times.minutesAway));
+            $(scheduleSelectors.timeToTrain).text(
+                convertTimeToTrain(times.secondsToNext));
 
-            // Start the 'Minutes Away' counter.
-            updateTimes(scheduleSelectors, data, times.minutesAway);
+            // Restart the count down timer on the Time To Train column.
+            manageTrainTimes(scheduleSelectors, data, times.secondsToNext);
         };
 
         /**
-         * Start the initial 'Minutes Away' counter when a record is added,
-         * and setup to update the 'Next Train' and 'Minutes Away' when
-         * the initial timer expires.
+         * Initiate the process for updating the Time To Train, and
+         * managing the Next Train time.
          *
-         * @param scheduleSelectors
-         * @param train
-         * @param minutes
+         * @param {Object} scheduleSelectors
+         * @param {Object} train
+         * @param {number} seconds
          */
-        const updateTimes = function (scheduleSelectors, train, minutes) {
-            /**
-             * Update the display of the 'Minutes Away' from the results
-             * of the `timer` function.
-             *
-             * @param seconds
-             */
-            const countdown = function (seconds) {
-                const minutes = Math.floor(seconds / 60);
-                const remainder = seconds % 60;
+        const manageTrainTimes = function (scheduleSelectors, train, seconds) {
 
-                let time = `${minutes}:${remainder < 10 ? '0' : ''}${remainder}`;
-
-                $(scheduleSelectors.minutesAwaySelector).text(time);
+            const updateObject = {
+                callback: updateTimeToTrain,
+                element: scheduleSelectors.timeToTrain
             };
 
-            // Start the 'Minutes Away' timer.
-            timer(minutes, countdown, () => {
+            countDownTimer(seconds, updateObject, function () {
                 return updateTrainTimeCounters(train, scheduleSelectors);
             });
         };
 
         /**
-         * Add a row to the 'Current Train Schedule' table.
+         * Update the 'Current Train Schedule' table.
          *
-         * @param {firebase.firestore.DocumentReference|string} rowIdentifier The document Path from Firebase.
+         * @param {firebase.firestore.DocumentReference|string} rowIdentifier
          * @param {Object} data
-         * @type {{startingLocation: string, destination: string, firstTrainTime: string, trainInterval: number}} data
          */
         const addScheduledTrain = function (rowIdentifier, data) {
             /**
              * Define the selectors for updating the `Next Train` and
-             * `Time to Train` cells dynamically.
+             * `Time to Train` cells.
              *
              * @type {{minutesAwaySelector: string, nextTrainTimeSelector: string}}
              */
             const trainScheduleSelectors = {
-                minutesAwaySelector: `[data-record-id="${rowIdentifier}"] > .minutes-away`,
-                nextTrainTimeSelector: `[data-record-id="${rowIdentifier}"] > .next-train-time`
+                timeToTrain: `[data-record-id="${rowIdentifier}"] > .time-to-train`,
+                nextTrainTime: `[data-record-id="${rowIdentifier}"] > .next-train-time`
             };
 
             // Get the arrival times, and time to next train.
@@ -447,8 +448,8 @@
                     <td class="text-right pr-2 next-train-time">
                         ${times.nextArrival.format('h:mm A')}
                     </td>
-                    <td class="text-right pr-4 minutes-away">
-                        ${formatTimeToTrain(times.minutesAway)}
+                    <td class="text-right pr-4 time-to-train">
+                        ${convertTimeToTrain(times.secondsToNext)}
                     </td>
                     <td class="d-flex justify-content-around">
                         <button class="btn btn-danger remove" type="button" role="delete">
@@ -457,10 +458,10 @@
                     </td>
                 </tr>`;
 
-            table.append(tableRow);
+            tableBody.append(tableRow);
 
             // Start the 'Time to train' timer.
-            updateTimes(trainScheduleSelectors, data, times.minutesAway);
+            manageTrainTimes(trainScheduleSelectors, data, times.secondsToNext);
         };
 
         /**
