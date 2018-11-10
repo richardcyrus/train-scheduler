@@ -79,7 +79,6 @@
                 'signInOptions': [
                     firebase.auth.GoogleAuthProvider.PROVIDER_ID,
                     firebase.auth.GithubAuthProvider.PROVIDER_ID,
-                    firebaseui.auth.AnonymousAuthProvider.PROVIDER_ID
                 ],
                 'tosUrl': 'terms.html',
                 'privacyPolicyUrl': 'privacy.html'
